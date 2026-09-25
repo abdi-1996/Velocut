@@ -1,0 +1,84 @@
+name: Build VeloCut AI IPA
+run-name: VeloCut v0.6.3 • ${{ github.sha }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: ['VeloCutAI/**','.github/workflows/main.yml']
+permissions:
+  contents: read
+concurrency:
+  group: velocut-build
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare v0.4.2 patcher
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('VeloCutAI/patch_v04_interactions.py');s=p.read_text();s=s.replace(r"ForEach\(0<\.\.<3",r"ForEach\(0\.\.<3");p.write_text(s)
+          PY
+      - run: python3 VeloCutAI/patch_v04_interactions.py
+      - run: python3 VeloCutAI/patch_v043_finish.py
+      - run: python3 VeloCutAI/patch_v044_curve_ui.py
+      - run: python3 VeloCutAI/patch_v044_compile.py
+      - run: python3 VeloCutAI/patch_v045_matcher_fix.py
+      - run: python3 VeloCutAI/patch_v045_card_matcher.py
+      - run: python3 VeloCutAI/patch_v045_pro_ui.py
+      - run: python3 VeloCutAI/patch_v045_compile.py
+      - run: python3 VeloCutAI/patch_v046_curve_stability.py
+      - run: python3 VeloCutAI/patch_v047_matcher_fix.py
+      - run: python3 VeloCutAI/patch_v047_clean_ui.py
+      - run: python3 VeloCutAI/patch_v047_compile.py
+      - run: python3 VeloCutAI/patch_v048_rife_ai.py
+      - run: python3 VeloCutAI/patch_v049_audio_beats.py
+      - name: Restore exact v0.5 foundation
+        run: python3 VeloCutAI/patch_v050_pro_workspace.py
+      - name: Relax v0.5 track matcher
+        run: python3 VeloCutAI/patch_v054_relax_v053_matcher.py
+      - name: Upgrade only v0.5 tracks
+        run: python3 VeloCutAI/patch_v053_universal_tracks.py
+      - name: Fix track controls and audio gallery
+        run: python3 VeloCutAI/patch_v055_track_controls_audio_gallery.py
+      - name: Dynamic tracks and contextual audio editor
+        run: python3 VeloCutAI/patch_v056_dynamic_tracks_audio_ui.py
+      - name: Compact timeline UI and vertical scroll
+        run: python3 VeloCutAI/patch_v060_compact_timeline_ui.py
+      - name: Long press move and magnetic snapping
+        run: python3 VeloCutAI/patch_v061_interaction_snap_fix.py
+      - name: Fixed drag, audio selection and compact track rail
+        run: python3 VeloCutAI/patch_v062_drag_audio_trackpanel.py
+      - name: Unified track rail and live audio drag preview
+        run: python3 VeloCutAI/patch_v063_unified_rail_audio_drag_preview.py
+      - name: Grouped Video Audio Text FX workflow
+        run: python3 VeloCutAI/patch_v064_grouped_media_tracks.py
+      - name: Completely fresh editor UI
+        run: python3 VeloCutAI/patch_v065_fresh_editor_ui.py
+      - name: Fresh UI compile fixes
+        run: python3 VeloCutAI/patch_v066_fresh_ui_compile_fix.py
+      - name: Match reference editor UI
+        run: python3 VeloCutAI/patch_v067_reference_editor_ui.py
+      - name: DaVinci Cut timeline and trim handles
+        run: python3 VeloCutAI/patch_v068_davinci_cut_timeline.py
+      - run: brew install xcodegen
+      - working-directory: VeloCutAI
+        run: xcodegen generate
+      - name: Build
+        working-directory: VeloCutAI
+        run: xcodebuild -project VeloCutAI.xcodeproj -scheme VeloCutAI -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' build
+      - name: Package IPA
+        working-directory: VeloCutAI
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/VeloCutAI.app"
+          test -d "$APP_PATH"
+          rm -rf Payload && mkdir Payload && cp -R "$APP_PATH" Payload/
+          zip -qry VeloCutAI-v0.6.3-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VeloCutAI-v0.6.3-unsigned-ipa
+          path: VeloCutAI/VeloCutAI-v0.6.3-unsigned.ipa
+          if-no-files-found: error

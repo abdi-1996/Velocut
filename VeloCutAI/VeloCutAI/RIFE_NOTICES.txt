@@ -1,0 +1,13 @@
+VeloCut AI - Third Party Notices
+
+RifeMetal
+Copyright 2026 xzhih
+Licensed under the Apache License, Version 2.0.
+Source: https://github.com/cinemore/rife-metal
+
+Practical-RIFE v4.26 model weights
+Copyright (c) 2021 hzwer
+Licensed under the MIT License.
+Source: https://github.com/hzwer/Practical-RIFE
+
+The RIFE model is used for on-device video frame interpolation.

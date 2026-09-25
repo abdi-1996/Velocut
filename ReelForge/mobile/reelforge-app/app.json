@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "ReelForge",
+    "slug": "reelforge",
+    "version": "0.2.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.abdi.reelforge",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Распознавание речи из выбранного видео на устройстве для субтитров"
+      },
+      "buildNumber": "2"
+    },
+    "android": {
+      "predictiveBackGestureEnabled": false,
+      "package": "app.reelforge.mobile"
+    },
+    "web": {},
+    "scheme": "reelforge",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Выберите видео для монтажа рилса",
+          "microphonePermission": false
+        }
+      ],
+      "expo-secure-store",
+      "expo-video",
+      "expo-sharing"
+    ]
+  }
+}

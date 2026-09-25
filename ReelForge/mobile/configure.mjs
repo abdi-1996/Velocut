@@ -1,0 +1,14 @@
+import {copyFileSync,readFileSync,writeFileSync} from 'node:fs';
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=dirname(fileURLToPath(import.meta.url));
+const target=resolve(root,'reelforge-app');
+copyFileSync(resolve(root,'App.tsx'),resolve(target,'App.tsx'));
+copyFileSync(resolve(root,'eas.json'),resolve(target,'eas.json'));
+const path=resolve(target,'app.json');const data=JSON.parse(readFileSync(path,'utf8'));
+Object.assign(data.expo,{name:'ReelForge',slug:'reelforge',scheme:'reelforge',orientation:'portrait',userInterfaceStyle:'dark'});
+data.expo.ios={...data.expo.ios,bundleIdentifier:'app.reelforge.mobile',supportsTablet:true,infoPlist:{NSAppTransportSecurity:{NSAllowsLocalNetworking:true},NSLocalNetworkUsageDescription:'Подключение к вашему серверу монтажа'}};
+data.expo.android={...data.expo.android,package:'app.reelforge.mobile'};
+data.expo.plugins=[...(data.expo.plugins||[]),['expo-image-picker',{photosPermission:'Выберите видео для монтажа рилса',microphonePermission:false}], 'expo-secure-store'];
+writeFileSync(path,JSON.stringify(data,null,2));
+console.log('Ready. cd reelforge-app && npx expo start. Use HTTPS for release builds.');
