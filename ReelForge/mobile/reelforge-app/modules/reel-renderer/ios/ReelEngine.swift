@@ -8,7 +8,7 @@ private func tm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferre
 private func fail(_ text: String) -> NSError { NSError(domain: "ReelForge", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
 struct ReelCaption { let start: Double; let end: Double; let text: String }
 struct ReelSpan { let start: Double; let end: Double }
-private struct ReelVisual {
+struct ReelVisual {
   let track: AVMutableCompositionTrack
   let transform: CGAffineTransform
   let start: Double
@@ -240,65 +240,14 @@ public final class ReelEngine {
     vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
     vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
     vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+    let textures = await MainActor.run { captions.map { ReelTextTexture(caption: $0, size: size) } }
     let points = Array(Set([0.0, total]+visuals.flatMap { [$0.start, $0.end] })).sorted()
-    var instructions: [AVMutableVideoCompositionInstruction] = []
-    for i in 0..<points.count-1 where points[i+1]-points[i] > 0.00001 {
-      let a = points[i], b = points[i+1], mid = (a+b)/2
-      let active = visuals.filter { $0.start <= mid && $0.end > mid }
-      let instruction = AVMutableVideoCompositionInstruction()
-      instruction.timeRange = CMTimeRange(start: tm(a), duration: tm(b-a)); instruction.backgroundColor = UIColor.black.cgColor
-      var layers: [AVMutableVideoCompositionLayerInstruction] = []
-      for (j, visual) in active.enumerated() {
-        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: visual.track)
-        layer.setTransform(visual.transform, at: tm(a))
-        if active.count == 2 {
-          let incoming = j == 1
-          if template == "cinema" {
-            let half = (a+b)/2
-            layer.setOpacity(incoming ? 0 : 1, at: tm(a))
-            layer.setOpacityRamp(fromStartOpacity: incoming ? 0 : 1, toEndOpacity: 0, timeRange: CMTimeRange(start: tm(a), duration: tm(half-a)))
-            layer.setOpacityRamp(fromStartOpacity: 0, toEndOpacity: incoming ? 1 : 0, timeRange: CMTimeRange(start: tm(half), duration: tm(b-half)))
-          } else {
-            // Incoming is composited above an opaque outgoing frame (no dark dip).
-            layer.setOpacityRamp(fromStartOpacity: incoming ? 0 : 1, toEndOpacity: 1, timeRange: instruction.timeRange)
-            if template == "velocity" {
-              let first = visual.transform.concatenating(CGAffineTransform(translationX: incoming ? size.width : 0, y: 0))
-              let last = visual.transform.concatenating(CGAffineTransform(translationX: incoming ? 0 : -size.width, y: 0))
-              layer.setTransformRamp(fromStart: first, toEnd: last, timeRange: instruction.timeRange)
-            } else if template == "zoom", incoming {
-              let zoom = CGAffineTransform(translationX: -size.width*0.125, y: -size.height*0.125).scaledBy(x: 1.25, y: 1.25)
-              layer.setTransformRamp(fromStart: visual.transform.concatenating(zoom), toEnd: visual.transform, timeRange: instruction.timeRange)
-            }
-          }
-        }
-        layers.insert(layer, at: 0)
-      }
-      instruction.layerInstructions = layers; instructions.append(instruction)
-    }
-    vc.instructions = instructions
-    if !captions.isEmpty || template == "flash" {
-      let parent = CALayer(); parent.frame = CGRect(origin: .zero, size: size)
-      let video = CALayer(); video.frame = parent.bounds; parent.addSublayer(video)
-      if template == "flash" {
-        for visual in visuals.dropFirst() {
-          let flash = CALayer(); flash.frame = parent.bounds; flash.backgroundColor = UIColor.white.cgColor; flash.opacity = 0
-          let animation = CAKeyframeAnimation(keyPath: "opacity"); animation.values = [0,0.9,0]; animation.keyTimes = [0,0.5,1]
-          animation.beginTime = AVCoreAnimationBeginTimeAtZero+visual.start; animation.duration = 0.18
-          animation.isRemovedOnCompletion = false; animation.fillMode = .both
-          flash.add(animation, forKey: "flash"); parent.addSublayer(flash)
-        }
-      }
-      for caption in captions where caption.end > caption.start {
-        let layer = CATextLayer(); layer.frame = CGRect(x: 35, y: size.height*0.18, width: size.width-70, height: size.height*0.15)
-        layer.string = caption.text; layer.font = UIFont.boldSystemFont(ofSize: size.width*0.06).fontName as CFTypeRef
-        layer.fontSize = size.width*0.06; layer.foregroundColor = UIColor.white.cgColor; layer.alignmentMode = .center
-        layer.isWrapped = true; layer.contentsScale = 2; layer.shadowColor = UIColor.black.cgColor; layer.shadowOpacity = 1; layer.shadowRadius = 3; layer.shadowOffset = CGSize(width: 1, height: -1); layer.opacity = 0
-        let animation = CAKeyframeAnimation(keyPath: "opacity"); animation.values = [0,1,1,0]; animation.keyTimes = [0,0.08,0.92,1]
-        animation.beginTime = AVCoreAnimationBeginTimeAtZero+caption.start; animation.duration = caption.end-caption.start
-        animation.isRemovedOnCompletion = false; animation.fillMode = .both
-        layer.add(animation, forKey: "caption"); parent.addSublayer(layer)
-      }
-      vc.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
+    vc.customVideoCompositorClass = ReelVideoCompositor.self
+    vc.instructions = (0..<points.count-1).compactMap { index in
+      let a = points[index], b = points[index+1]
+      guard b-a > 0.00001 else { return nil }
+      let active = visuals.filter { $0.start <= (a+b)/2 && $0.end > (a+b)/2 }
+      return ReelCIInstruction(range: CMTimeRange(start: tm(a), end: tm(b)), visuals: active, template: template, size: size, captions: textures, flashes: template == "flash" ? visuals.dropFirst().map { $0.start } : [])
     }
     let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("ReelForge", isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -320,9 +269,13 @@ public final class ReelEngine {
       }
     }
     defer { monitor.cancel(); locked { exporter = nil } }
-    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in session.exportAsynchronously { c.resume() } }
+    if #available(iOS 18.0, *) {
+      try await session.export(to: session.outputURL!, as: session.outputFileType!)
+    } else {
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in session.exportAsynchronously { c.resume() } }
+      guard session.status == .completed else { throw session.error ?? fail("Не удалось экспортировать видео") }
+    }
     try check()
-    guard session.status == .completed else { throw session.error ?? fail("Не удалось экспортировать видео") }
   }
 }
 private final class ReelRecognitionCompletion {

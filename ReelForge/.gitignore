@@ -1,7 +1,0 @@
-node_modules/
-.expo/
-.env
-__pycache__/
-*.pyc
-data/
-dist/
