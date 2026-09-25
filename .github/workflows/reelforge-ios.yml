@@ -1,0 +1,82 @@
+name: ReelForge iOS IPA
+run-name: ReelForge 0.1.0 unsigned IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [reelforge-ios]
+    paths: ['ReelForge/**', '.github/workflows/reelforge-ios.yml']
+permissions:
+  contents: read
+concurrency:
+  group: reelforge-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+    defaults:
+      run:
+        working-directory: ReelForge/mobile/reelforge-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ReelForge/mobile/reelforge-app/package-lock.json
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          node --version
+          pod --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Generate native iOS project
+        run: npx expo prebuild --platform ios --no-install
+      - name: Install pods
+        run: pod install --project-directory=ios
+      - name: Build iPhone application
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKSPACE_PATH=$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          SCHEME_NAME=$(find ios -maxdepth 1 -name '*.xcodeproj' -exec basename {} .xcodeproj \; | head -1)
+          test -n "$WORKSPACE_PATH"
+          test -n "$SCHEME_NAME"
+          xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME_NAME" \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build -jobs 3 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
+            build > xcodebuild.log 2>&1 || { tail -n 160 xcodebuild.log; exit 1; }
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$APP_PATH"
+          test -f "$APP_PATH/main.jsbundle"
+          mkdir -p output/Payload
+          cp -R "$APP_PATH" output/Payload/
+          cd output
+          zip -qry ReelForge-0.1.0-unsigned.ipa Payload
+          unzip -t ReelForge-0.1.0-unsigned.ipa | tail -1
+          shasum -a 256 ReelForge-0.1.0-unsigned.ipa > SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReelForge-0.1.0-unsigned-IPA
+          path: |
+            ReelForge/mobile/reelforge-app/output/ReelForge-0.1.0-unsigned.ipa
+            ReelForge/mobile/reelforge-app/output/SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ReelForge-build-logs
+          path: ReelForge/mobile/reelforge-app/xcodebuild.log
+          if-no-files-found: ignore

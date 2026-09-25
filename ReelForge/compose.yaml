@@ -1,0 +1,13 @@
+services:
+  renderer:
+    build: ./server
+    ports: ["8787:8787"]
+    environment:
+      REELFORGE_TOKEN: ${REELFORGE_TOKEN:?Set REELFORGE_TOKEN in .env}
+      WHISPER_MODEL: small
+    volumes:
+      - renders:/app/data
+      - models:/root/.cache/huggingface
+volumes:
+  renders:
+  models:

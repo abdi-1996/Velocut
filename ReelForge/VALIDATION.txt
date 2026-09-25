@@ -1,0 +1,15 @@
+ReelForge MVP validation — 2026-09-25
+
+PASS: Python source compilation.
+PASS: Real FFmpeg export of Clean Cut, Velocity, Flash Pop, Cinema and Zoom Flow.
+PASS: 720x1280 output, audio stream present, duration 5.00–5.03 seconds.
+PASS: Speech segment concatenation with source audio and Cyrillic ASS subtitle rendering.
+PASS: HTTP authentication, rejected invalid configuration, missing music rejection.
+PASS: HTTP upload -> queued render -> completed status -> authenticated MP4 download -> deletion.
+PASS: npm dependencies installed; generated project and package-lock.json included.
+PASS: TypeScript `npx tsc --noEmit`.
+PASS: Expo JavaScript/Hermes export for iOS and Android (604 modules each).
+
+NOT TESTED: native IPA/APK builds, physical-device import/playback/sharing, background/resume behavior on devices, Whisper model download and actual speech recognition, HDR tone mapping, load/performance and long inputs.
+
+A JavaScript export is not a signed native app. This archive contains development source and instructions, no IPA/APK.
