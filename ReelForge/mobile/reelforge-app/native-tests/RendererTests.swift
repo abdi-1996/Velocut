@@ -3,6 +3,7 @@ import AVFoundation
 import UIKit
 @testable import RendererHost
 final class RendererTests: XCTestCase {
+ override func setUp() { super.setUp(); executionTimeAllowance = 120 }
  func fixture(_ folder: URL) async throws -> (URL,URL) {
   let video = folder.appendingPathComponent("input.mp4"), audio = folder.appendingPathComponent("music.wav")
   let writer = try AVAssetWriter(outputURL: video, fileType: .mp4)
@@ -36,7 +37,7 @@ final class RendererTests: XCTestCase {
   defer { try? FileManager.default.removeItem(at:folder) }
   let (video,music)=try await fixture(folder)
   for template in ["clean","velocity","flash","cinema","zoom"] {
-   let result=try await ReelEngine().render(["clips":[video.absoluteString],"music":music.absoluteString,"mode":"music","template":template,"duration":5,"bpm":120,"quality":"720","captions":"manual","text":"Привет мир\nНа телефоне"],progress:{_,_ in})
+   let result=try await ReelEngine().render(["clips":[video.absoluteString],"music":music.absoluteString,"mode":"music","template":template,"duration":5,"bpm":120,"quality":"720","captions":"manual","text":"Привет мир\nНа телефоне"],progress:{p,m in print("RENDER \(p) \(m)")})
    let url=URL(string:result["uri"] as! String)!, asset=AVURLAsset(url:url)
    defer { try? FileManager.default.removeItem(at:url) }
    let tracks=try await asset.loadTracks(withMediaType:.video)
@@ -62,7 +63,7 @@ final class RendererTests: XCTestCase {
   export.outputURL=source;export.outputFileType = .mp4
   await withCheckedContinuation { (c:CheckedContinuation<Void,Never>) in export.exportAsynchronously { c.resume() } }
   XCTAssertEqual(export.status,.completed)
-  let result=try await ReelEngine().render(["clips":[source.absoluteString],"mode":"speech","duration":5,"captions":"manual","text":"Тест"],progress:{_,_ in})
+  let result=try await ReelEngine().render(["clips":[source.absoluteString],"mode":"speech","duration":5,"captions":"manual","text":"Тест"],progress:{p,m in print("RENDER \(p) \(m)")})
   let url=URL(string:result["uri"] as! String)!;defer { try? FileManager.default.removeItem(at:url) }
   XCTAssertGreaterThan(result["duration"] as! Double,2.5)
   let audioTracks=try await AVURLAsset(url:url).loadTracks(withMediaType:.audio)

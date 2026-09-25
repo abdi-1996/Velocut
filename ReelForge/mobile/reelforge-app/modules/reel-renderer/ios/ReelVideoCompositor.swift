@@ -41,14 +41,21 @@ final class ReelVideoCompositor: NSObject, AVVideoCompositing {
   private let queue = DispatchQueue(label: "reelforge.frames")
   private let context = CIContext(options: [.cacheIntermediates: false])
   private var renderContext: AVVideoCompositionRenderContext?
-  func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) { queue.sync { renderContext = newRenderContext } }
+  private let stateLock = NSLock()
+  private var generation = 0
+  func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {
+    stateLock.lock(); renderContext = newRenderContext; stateLock.unlock()
+  }
   private func opacity(_ image: CIImage, _ value: Double) -> CIImage {
     let a = CGFloat(max(0,min(1,value)))
     return image.applyingFilter("CIColorMatrix", parameters: ["inputRVector":CIVector(x:a,y:0,z:0,w:0),"inputGVector":CIVector(x:0,y:a,z:0,w:0),"inputBVector":CIVector(x:0,y:0,z:a,w:0),"inputAVector":CIVector(x:0,y:0,z:0,w:a)])
   }
   func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
+    stateLock.lock(); let currentGeneration = generation; stateLock.unlock()
     queue.async { autoreleasepool {
-      guard let instruction = request.videoCompositionInstruction as? ReelCIInstruction, let output = self.renderContext?.newPixelBuffer() else {
+      self.stateLock.lock(); let context = self.renderContext; let cancelled = self.generation != currentGeneration; self.stateLock.unlock()
+      if cancelled { request.finishCancelledRequest(); return }
+      guard let instruction = request.videoCompositionInstruction as? ReelCIInstruction, let output = context?.newPixelBuffer() else {
         request.finish(with: NSError(domain:"ReelForge",code:2,userInfo:[NSLocalizedDescriptionKey:"Не удалось создать видеокадр"])); return
       }
       let size = instruction.size; let bounds = CGRect(origin:.zero,size:size); let t = request.compositionTime.seconds
@@ -87,5 +94,5 @@ final class ReelVideoCompositor: NSObject, AVVideoCompositing {
       request.finish(withComposedVideoFrame:output)
     }}
   }
-  func cancelAllPendingVideoCompositionRequests() { queue.sync {} }
+  func cancelAllPendingVideoCompositionRequests() { stateLock.lock(); generation += 1; stateLock.unlock() }
 }
