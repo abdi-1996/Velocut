@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {Alert, AppState, ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -31,11 +31,11 @@ export default function App(){
  const polling=useRef(false);const jobConnection=useRef({url:'',key:''});
  useEffect(()=>{(async()=>{const saved=await SecureStore.getItemAsync('connection');if(saved){const c=JSON.parse(saved);setServer(c.url);setToken(c.key);setSettings(false);jobConnection.current=c;}const pending=await SecureStore.getItemAsync('pending');if(pending){const p=JSON.parse(pending);jobConnection.current=p.connection;setJob(p.job);setBusy(true);}})().catch(()=>setHint('Не удалось восстановить настройки'));},[]);
  const connection=()=>({url:server.trim().replace(/\/$/,''),key:token.trim()});
- async function request(path:string,options:RequestInit={},c=connection()){
+ const request=useCallback(async (path:string,options:RequestInit={},c={url:server.trim().replace(/\/$/,''),key:token.trim()})=>{
    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30*60*1000);
    try{const r=await fetch(c.url+path,{...options,signal:controller.signal,headers:{Authorization:`Bearer ${c.key}`,...options.headers}});
    if(!r.ok){let message=`Ошибка ${r.status}`;try{const e=await r.json();message=typeof e.detail==='string'?e.detail:JSON.stringify(e.detail);}catch{}throw new Error(message);}return r;}finally{clearTimeout(timer);}
- }
+ },[server,token]);
  async function connect(){try{const c=connection();if(!/^https?:\/\//.test(c.url))throw new Error('Укажите полный адрес http:// или https://');await request('/health');await SecureStore.setItemAsync('connection',JSON.stringify(c));setHint('Сервер подключён');setSettings(false);}catch(e:any){Alert.alert('Подключение',e.message);}}
  async function selectClips(){try{const p=await ImagePicker.requestMediaLibraryPermissionsAsync();if(!p.granted)throw new Error('Разрешите доступ к видео в настройках телефона');const r=await ImagePicker.launchImageLibraryAsync({mediaTypes:['videos'],allowsMultipleSelection:mode==='music',selectionLimit:12,quality:1});if(!r.canceled){setClips(r.assets.map((a,i)=>({uri:a.uri,name:a.fileName||`clip-${i}.mp4`,mimeType:a.mimeType||'video/mp4'})));setResult(null);}}catch(e:any){Alert.alert('Импорт',e.message);}}
  async function selectMusic(){try{const r=await DocumentPicker.getDocumentAsync({type:'audio/*',copyToCacheDirectory:true});if(!r.canceled)setMusic({uri:r.assets[0].uri,name:r.assets[0].name,mimeType:r.assets[0].mimeType||'audio/mpeg'});}catch(e:any){Alert.alert('Музыка',e.message);}}
@@ -49,11 +49,12 @@ export default function App(){
    const j={id,status:'queued',progress:0,message:'В очереди'};jobConnection.current=c;await SecureStore.setItemAsync('pending',JSON.stringify({job:j,connection:c}));setJob(j);setHint('');
   }catch(e:any){setBusy(false);setHint('');Alert.alert('Монтаж',e.message);}
  }
+ const jobId=job?.id;const jobStatus=job?.status;
  useEffect(()=>{
-  if(!job||['done','error'].includes(job.status))return;
+  if(!jobId||['done','error'].includes(jobStatus??''))return;
   let stopped=false;
   async function poll(){if(polling.current)return;polling.current=true;
-   try{const c=jobConnection.current;const r=await request(`/jobs/${job!.id}`,{},c);const next:Job=await r.json();if(stopped)return;
+   try{const c=jobConnection.current;const r=await request(`/jobs/${jobId}`,{},c);const next:Job=await r.json();if(stopped)return;
     if(next.status==='done'){
       setHint('Скачивание результата…');
       const file=FileSystem.documentDirectory+`reel-${next.id}.mp4`;
@@ -68,8 +69,8 @@ export default function App(){
   }
   poll();const timer=setInterval(poll,3000);const sub=AppState.addEventListener('change',s=>{if(s==='active')poll();});
   return()=>{stopped=true;clearInterval(timer);sub.remove();};
- },[job?.id,job?.status]);
- async function clearResult(){try{await request(`/jobs/${job!.id}`,{method:'DELETE'},jobConnection.current);if(result)await FileSystem.deleteAsync(result,{idempotent:true});setResult(null);setJob(null);setHint('Результат удалён');}catch(e:any){Alert.alert('Удаление',e.message);}}
+ },[jobId,jobStatus,request]);
+ async function clearResult(){try{await request(`/jobs/${jobId}`,{method:'DELETE'},jobConnection.current);if(result)await FileSystem.deleteAsync(result,{idempotent:true});setResult(null);setJob(null);setHint('Результат удалён');}catch(e:any){Alert.alert('Удаление',e.message);}}
  const button=(text:string,onPress:()=>void,primary=false)=><Pressable disabled={busy} onPress={onPress} style={[s.button,primary&&s.primary,busy&&{opacity:.4}]}><Text style={[s.buttonText,primary&&{color:'#12170D'}]}>{text}</Text></Pressable>;
  return <SafeAreaView style={s.root}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
   <View style={s.row}><View><Text style={s.eyebrow}>YOUR MOMENTS. IN MOTION.</Text><Text style={s.logo}>reelforge<Text style={{color:'#C3F578'}}> ✦</Text></Text></View><Pressable disabled={busy} onPress={()=>setSettings(!settings)}><Text style={s.settings}>⚙</Text></Pressable></View>
@@ -86,10 +87,10 @@ export default function App(){
   {mode==='music'?<View style={s.row}><Text style={[s.muted,{flex:1}]}>Темп музыки, BPM</Text><TextInput editable={!busy} value={bpm} onChangeText={setBpm} keyboardType="number-pad" maxLength={3} style={[s.input,{width:86,textAlign:'center'}]}/></View>:<><Text style={s.muted}>Язык речи</Text><ScrollView horizontal contentContainerStyle={{gap:8,marginVertical:12}}>{['auto','ru','en','kk','uz','tr','fr'].map(l=><Pressable disabled={busy} key={l} onPress={()=>setLanguage(l)} style={[s.chip,l===language&&s.active]}><Text style={s.buttonText}>{l==='auto'?'Авто':l.toUpperCase()}</Text></Pressable>)}</ScrollView></>}
   <View style={s.row}><View style={{flex:1}}><Text style={s.buttonText}>Экспорт Full HD</Text><Text style={s.small}>{hd?'1080 × 1920':'720 × 1280'} · 9:16 · MP4</Text></View><Switch disabled={busy} value={hd} onValueChange={setHd} trackColor={{true:'#698C3B'}} thumbColor={hd?'#C3F578':'#AAA'}/></View>
   <Text style={[s.small,{marginVertical:18}]}>Обработка на подключённом сервере. До 12 клипов и 500 МБ на монтаж. Звук исходников в музыкальном режиме заменяется выбранной музыкой.</Text>
-  {button('✦  Создать рилс',start,true)}
+  {<Pressable disabled={busy} onPress={start} style={[s.button,s.primary,busy&&{opacity:.4}]}><Text style={[s.buttonText,{color:'#12170D'}]}>✦  Создать рилс</Text></Pressable>}
   {busy&&<View style={s.panel}><ActivityIndicator color="#C3F578"/><Text style={s.title}>{job?.message||'Загрузка файлов'}</Text><View style={s.track}><View style={[s.fill,{width:`${job?.progress||0}%`}]}/></View><Text style={s.small}>После загрузки сервер продолжает монтаж при сворачивании приложения.</Text></View>}
   {!!hint&&<Text selectable style={[s.muted,{marginVertical:14}]}>{hint}</Text>}
-  {result&&<View style={s.panel}><Text style={s.title}>Рилс готов</Text><Preview uri={result}/>{button('Сохранить / поделиться',()=>{Sharing.shareAsync(result,{mimeType:'video/mp4',UTI:'public.mpeg-4'}).catch(e=>Alert.alert('Экспорт',e.message));},true)}{button('Удалить результат с сервера',clearResult)}</View>}
+  {result&&<View style={s.panel}><Text style={s.title}>Рилс готов</Text><Preview uri={result}/>{button('Сохранить / поделиться',()=>{Sharing.shareAsync(result,{mimeType:'video/mp4',UTI:'public.mpeg-4'}).catch(e=>Alert.alert('Экспорт',e.message));},true)}{<Pressable disabled={busy} onPress={clearResult} style={s.button}><Text style={s.buttonText}>Удалить результат с сервера</Text></Pressable>}</View>}
   <Text style={s.footer}>REELFORGE · DEVELOPMENT MVP</Text>
  </ScrollView></KeyboardAvoidingView></SafeAreaView>;
 }
