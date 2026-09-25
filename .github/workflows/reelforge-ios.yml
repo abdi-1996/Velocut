@@ -1,5 +1,5 @@
 name: ReelForge iOS IPA
-run-name: ReelForge 0.1.0 unsigned IPA
+run-name: ReelForge 0.2.0 unsigned IPA
 on:
   workflow_dispatch:
   push:
@@ -38,6 +38,15 @@ jobs:
         run: npx tsc --noEmit
       - name: Generate native iOS project
         run: npx expo prebuild --platform ios --no-install
+      - name: Local renderer integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          cd native-tests
+          xcodegen generate
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if "iPhone" in x["name"]))')
+          xcodebuild test -project ReelRendererTests.xcodeproj -scheme RendererTests -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO > test.log 2>&1 || { tail -n 160 test.log; exit 1; }
       - name: Install pods
         run: pod install --project-directory=ios
       - name: Build iPhone application
@@ -63,14 +72,14 @@ jobs:
           mkdir -p output/Payload
           cp -R "$APP_PATH" output/Payload/
           cd output
-          zip -qry ReelForge-0.1.0-unsigned.ipa Payload
-          unzip -t ReelForge-0.1.0-unsigned.ipa | tail -1
-          shasum -a 256 ReelForge-0.1.0-unsigned.ipa > SHA256.txt
+          zip -qry ReelForge-0.2.0-unsigned.ipa Payload
+          unzip -t ReelForge-0.2.0-unsigned.ipa | tail -1
+          shasum -a 256 ReelForge-0.2.0-unsigned.ipa > SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ReelForge-0.1.0-unsigned-IPA
+          name: ReelForge-0.2.0-unsigned-IPA
           path: |
-            ReelForge/mobile/reelforge-app/output/ReelForge-0.1.0-unsigned.ipa
+            ReelForge/mobile/reelforge-app/output/ReelForge-0.2.0-unsigned.ipa
             ReelForge/mobile/reelforge-app/output/SHA256.txt
           if-no-files-found: error
           retention-days: 14
@@ -78,5 +87,8 @@ jobs:
         if: failure()
         with:
           name: ReelForge-build-logs
-          path: ReelForge/mobile/reelforge-app/xcodebuild.log
+          path: |
+            ReelForge/mobile/reelforge-app/xcodebuild.log
+            ReelForge/mobile/reelforge-app/native-tests/test.log
+            ReelForge/mobile/reelforge-app/native-tests/TestResults.xcresult
           if-no-files-found: ignore
