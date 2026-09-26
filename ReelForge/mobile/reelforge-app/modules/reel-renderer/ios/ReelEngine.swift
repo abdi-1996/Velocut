@@ -62,8 +62,19 @@ public final class ReelEngine {
         CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: bytes.count, destination: bytes.baseAddress!)
       }
       guard status == kCMBlockBufferNoErr, count > 0 else { continue }
-      let square = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
-      values.append((CMSampleBufferGetPresentationTimeStamp(buffer).seconds, sqrt(square / Double(count))))
+      guard let description = CMSampleBufferGetFormatDescription(buffer),
+            let format = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee,
+            format.mSampleRate > 0, format.mChannelsPerFrame > 0 else { continue }
+      let channels = Int(format.mChannelsPerFrame)
+      let hop = max(1,Int(format.mSampleRate*0.01))*channels
+      let timestamp = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+      // Reader buffers have variable duration; analyze 10 ms windows, not one RMS per buffer.
+      for offset in stride(from:0,to:count,by:hop) {
+        let end = min(count,offset+hop)
+        var square = 0.0
+        for i in offset..<end { square += Double(samples[i])*Double(samples[i]) }
+        values.append((timestamp+Double(offset/channels)/format.mSampleRate,sqrt(square/Double(end-offset))))
+      }
     }
     if reader.status == .failed { throw reader.error ?? fail("Ошибка декодирования") }
     return values
@@ -85,7 +96,7 @@ public final class ReelEngine {
         var score = 0.0; var normA = 0.0; var normB = 0.0
         for i in lag..<count { score += onset[i]*onset[i-lag]; normA += onset[i]*onset[i]; normB += onset[i-lag]*onset[i-lag] }
         let normalized = score/max(0.00000001,sqrt(normA*normB))
-        if normalized > best { best = normalized; tempo = Double(candidate) }
+        if normalized > best { best = normalized; tempo = 3000/Double(lag) }
       }
     }
     let beat = 60/tempo
