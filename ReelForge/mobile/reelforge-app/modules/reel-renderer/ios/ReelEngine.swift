@@ -69,7 +69,7 @@ public final class ReelEngine {
     return values
   }
   // Onset envelope at 50 Hz, bounded to the selected music interval.
-  private func cuts(_ music: AVAsset, total: Double, bpm: Double, automatic: Bool, template: String) throws -> [Double] {
+  func cuts(_ music: AVAsset, total: Double, bpm: Double, automatic: Bool, template: String) throws -> [Double] {
     let values = try energies(music, limit: total)
     let count = max(2, Int(ceil(total*50)))
     var energy = [Double](repeating: 0, count: count)
@@ -91,7 +91,17 @@ public final class ReelEngine {
     let beat = 60/tempo
     let trend = ["hero","redline"].contains(template)
     let pattern: [Double] = template == "hero" ? [2,1,1,0.5,0.5,1,1,2] : template == "redline" ? [4,2,2,4,2,4] : [4]
-    var result = [0.0]; var position = 0.0; var index = 0
+    var phase = 0.0
+    if automatic {
+      let period = max(1,Int((beat*50).rounded()))
+      var best = 0.0
+      for candidate in 0..<period {
+        let indices = stride(from:candidate,to:count,by:period)
+        let score = indices.reduce(0.0) { $0+onset[$1] }
+        if score > best { best = score; phase = Double(candidate)/50 }
+      }
+    }
+    var result = [0.0]; var position = phase; var index = 0
     while position < total {
       position += pattern[index % pattern.count]*beat; index += 1
       if position >= total-0.25 { break }
@@ -176,7 +186,7 @@ public final class ReelEngine {
     guard !clips.isEmpty && clips.count <= 12 else { throw fail("Выберите от 1 до 12 видео") }
     let assets = try clips.map { AVURLAsset(url: try localURL($0)) }
     let speech = options["mode"] as? String == "speech"
-    let template = options["template"] as? String ?? "clean"
+    let template = speech ? "clean" : (options["template"] as? String ?? "clean")
     let duration = min(60, max(5, (options["duration"] as? NSNumber)?.doubleValue ?? 15))
     let bpm = min(200, max(60, (options["bpm"] as? NSNumber)?.doubleValue ?? 120))
     let short: CGFloat = options["quality"] as? String == "1080" ? 1080 : 720

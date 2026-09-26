@@ -127,6 +127,7 @@ final class ReelVideoCompositor: NSObject, AVVideoCompositing {
         }
         frame = self.opacity(image,alpha).composited(over:frame)
       }
+      let analysisFrame = frame
       if instruction.template == "redline" {
         frame = frame.applyingFilter("CIColorCube",parameters:["inputCubeDimension":32,"inputCubeData":self.redCube])
           .applyingFilter("CIColorControls",parameters:["inputContrast":1.12,"inputBrightness":-0.025])
@@ -144,7 +145,7 @@ final class ReelVideoCompositor: NSObject, AVVideoCompositing {
       let activeCaptions = instruction.captions.filter { t >= $0.start && t < $0.end }
       var mask: CIImage?
       if instruction.depthText && !activeCaptions.isEmpty {
-        do { mask = try self.personMask(foreground,bounds:bounds) }
+        do { mask = try self.personMask(analysisFrame,bounds:bounds) }
         catch {
           request.finish(with:NSError(domain:"ReelForge",code:3,userInfo:[NSLocalizedDescriptionKey:"Маска человека недоступна на этом устройстве. Выключите «Текст за человеком» и повторите экспорт."])); return
         }

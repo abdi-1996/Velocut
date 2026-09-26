@@ -5,7 +5,7 @@ import CoreImage
 @testable import RendererHost
 final class RendererTests: XCTestCase {
  override func setUp() { super.setUp(); executionTimeAllowance = 180 }
- func fixture(_ folder: URL) async throws -> (URL,URL) {
+ func fixture(_ folder: URL, beats: Bool = false) async throws -> (URL,URL) {
   let video = folder.appendingPathComponent("input.mp4"), audio = folder.appendingPathComponent("music.wav")
   let writer = try AVAssetWriter(outputURL: video, fileType: .mp4)
   let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 180, AVVideoHeightKey: 320])
@@ -28,7 +28,7 @@ final class RendererTests: XCTestCase {
   XCTAssertEqual(writer.status,.completed)
   let format=AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
   let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:264600)!;buffer.frameLength=264600
-  for i in 0..<264600 { buffer.floatChannelData![0][i]=Float(sin(Double(i)*2*Double.pi*440/44100)*0.3) }
+  for i in 0..<264600 { buffer.floatChannelData![0][i]=Float(sin(Double(i)*2*Double.pi*440/44100)*(beats ? max(0.01,exp(-40*(Double(i)/44100).truncatingRemainder(dividingBy:0.5))) : 0.3)) }
   let file=try AVAudioFile(forWriting:audio,settings:format.settings);try file.write(from:buffer)
   return (video,audio)
  }
@@ -50,6 +50,17 @@ final class RendererTests: XCTestCase {
    let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true
    let image=try generator.copyCGImage(at:CMTime(seconds:1,preferredTimescale:600),actualTime:nil)
    let attachment=XCTAttachment(image:UIImage(cgImage:image));attachment.name=template;attachment.lifetime = .keepAlways;add(attachment)
+  }
+ }
+ func testBeatAlignmentOnPulseTrain() async throws {
+  let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+  defer { try? FileManager.default.removeItem(at:folder) }
+  let (_,music)=try await fixture(folder,beats:true)
+  let points=try ReelEngine().cuts(AVURLAsset(url:music),total:5,bpm:90,automatic:true,template:"hero")
+  XCTAssertGreaterThan(points.count,5)
+  for point in points.dropFirst().dropLast() {
+    XCTAssertLessThan(abs(point-(point/0.25).rounded()*0.25),0.11)
   }
  }
  func testDepthMaskRequest() throws {
