@@ -135,7 +135,7 @@ final class ReelVideoCompositor: NSObject, AVVideoCompositing {
         frame = frame.applyingFilter("CIColorControls",parameters:["inputContrast":1.10,"inputSaturation":0.9])
       }
       if ["hero","redline"].contains(instruction.template) {
-        frame = frame.applyingFilter("CIVignette",parameters:["inputIntensity":0.25*instruction.intensity,"inputRadius":min(size.width,size.height)*0.6])
+        frame = frame.applyingFilter("CIVignette",parameters:["inputIntensity":0.25*instruction.intensity,"inputRadius":1.2])
       }
       for flash in instruction.flashes where t >= flash && t < flash+0.18 {
         let a = (instruction.template == "hero" ? 0.18*instruction.intensity : 0.9)*(1-abs((t-flash)/0.09-1))
