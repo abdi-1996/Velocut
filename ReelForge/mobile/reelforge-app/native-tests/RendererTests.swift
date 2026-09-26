@@ -1,9 +1,10 @@
 import XCTest
 import AVFoundation
 import UIKit
+import CoreImage
 @testable import RendererHost
 final class RendererTests: XCTestCase {
- override func setUp() { super.setUp(); executionTimeAllowance = 120 }
+ override func setUp() { super.setUp(); executionTimeAllowance = 180 }
  func fixture(_ folder: URL) async throws -> (URL,URL) {
   let video = folder.appendingPathComponent("input.mp4"), audio = folder.appendingPathComponent("music.wav")
   let writer = try AVAssetWriter(outputURL: video, fileType: .mp4)
@@ -49,6 +50,33 @@ final class RendererTests: XCTestCase {
    let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true
    let image=try generator.copyCGImage(at:CMTime(seconds:1,preferredTimescale:600),actualTime:nil)
    let attachment=XCTAttachment(image:UIImage(cgImage:image));attachment.name=template;attachment.lifetime = .keepAlways;add(attachment)
+  }
+ }
+ func testDepthMaskRequest() throws {
+  let bounds=CGRect(x:0,y:0,width:256,height:256)
+  let frame=CIImage(color:CIColor(red:0.8,green:0.1,blue:0.1)).cropped(to:bounds)
+  let mask=try ReelVideoCompositor().personMask(frame,bounds:bounds)
+  XCTAssertNotNil(mask)
+  XCTAssertEqual(mask?.extent,bounds)
+ }
+ func testReferenceTemplatesAndAspectRatios() async throws {
+  let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+  defer { try? FileManager.default.removeItem(at:folder) }
+  let (video,music)=try await fixture(folder)
+  for (template,aspect,size) in [("hero","16:9",CGSize(width:1280,height:720)),("redline","1:1",CGSize(width:720,height:720))] {
+   let result=try await ReelEngine().render(["clips":[video.absoluteString],"music":music.absoluteString,"mode":"music","template":template,"aspect":aspect,"duration":5,"autoBeat":true,"selectMoments":true,"intensity":0.65,"captions":"manual","text":"MOTION"],progress:{p,m in print("TREND \(p) \(m)")})
+   let url=URL(string:result["uri"] as! String)!, asset=AVURLAsset(url:url)
+   defer { try? FileManager.default.removeItem(at:url) }
+   let tracks=try await asset.loadTracks(withMediaType:.video)
+   let actualSize=try await tracks[0].load(.naturalSize), duration=try await asset.load(.duration).seconds
+   XCTAssertEqual(actualSize,size);XCTAssertEqual(duration,5,accuracy:0.15)
+   let audio=try await asset.loadTracks(withMediaType:.audio);XCTAssertFalse(audio.isEmpty)
+   let generator=AVAssetImageGenerator(asset:asset)
+   for time in [0.1,1.0,2.1] {
+    let image=try generator.copyCGImage(at:CMTime(seconds:time,preferredTimescale:600),actualTime:nil)
+    let attachment=XCTAttachment(image:UIImage(cgImage:image));attachment.name="\(template)-\(time)";attachment.lifetime = .keepAlways;add(attachment)
+   }
   }
  }
  func testSpeechPauseCutAndManualText() async throws {

@@ -2,7 +2,7 @@
   "expo": {
     "name": "ReelForge",
     "slug": "reelforge",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "ios": {
@@ -11,7 +11,7 @@
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "Распознавание речи из выбранного видео на устройстве для субтитров"
       },
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "predictiveBackGestureEnabled": false,

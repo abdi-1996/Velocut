@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = 'ReelRenderer'
-  s.version = '0.2.0'
+  s.version = '0.3.0'
   s.summary = 'On-device ReelForge video renderer'
   s.description = 'Local AVFoundation editing, audio analysis and offline speech.'
   s.license = { :type => 'MIT' }
@@ -11,6 +11,6 @@ Pod::Spec.new do |s|
   s.source = { :git => 'https://github.com/abdi-1996/Velocut.git' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'AVFoundation', 'Speech', 'UIKit', 'QuartzCore'
+  s.frameworks = 'AVFoundation', 'Speech', 'UIKit', 'QuartzCore', 'Vision', 'CoreImage'
   s.source_files = '**/*.swift'
 end

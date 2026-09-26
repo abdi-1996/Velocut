@@ -68,19 +68,67 @@ public final class ReelEngine {
     if reader.status == .failed { throw reader.error ?? fail("Ошибка декодирования") }
     return values
   }
-  private func cuts(_ music: AVAsset, total: Double, bpm: Double) throws -> [Double] {
+  // Onset envelope at 50 Hz, bounded to the selected music interval.
+  private func cuts(_ music: AVAsset, total: Double, bpm: Double, automatic: Bool, template: String) throws -> [Double] {
     let values = try energies(music, limit: total)
-    var result = [0.0]; var position = 240 / bpm
-    while position < total - 0.65 {
-      var best = position; var strength = 0.0
-      for i in 1..<max(1, values.count) where abs(values[i].0-position) < 0.18 {
-        let onset = values[i].1-values[i-1].1
-        if onset > strength { strength = onset; best = values[i].0 }
+    let count = max(2, Int(ceil(total*50)))
+    var energy = [Double](repeating: 0, count: count)
+    for (time, value) in values { let i = min(count-1,max(0,Int(time*50))); energy[i] = max(energy[i],value) }
+    for i in 1..<count where energy[i] == 0 { energy[i] = energy[i-1] }
+    var onset = [Double](repeating: 0, count: count)
+    for i in 1..<count { onset[i] = max(0,energy[i]-energy[i-1]) }
+    var tempo = bpm
+    if automatic, count > 100 {
+      var best = 0.0
+      for candidate in 70...180 {
+        let lag = Int((3000.0/Double(candidate)).rounded())
+        var score = 0.0; var normA = 0.0; var normB = 0.0
+        for i in lag..<count { score += onset[i]*onset[i-lag]; normA += onset[i]*onset[i]; normB += onset[i-lag]*onset[i-lag] }
+        let normalized = score/max(0.00000001,sqrt(normA*normB))
+        if normalized > best { best = normalized; tempo = Double(candidate) }
       }
-      if best-result.last! > 0.65 && total-best > 0.65 { result.append(best) }
-      position += 240 / bpm
+    }
+    let beat = 60/tempo
+    let trend = ["hero","redline"].contains(template)
+    let pattern: [Double] = template == "hero" ? [2,1,1,0.5,0.5,1,1,2] : template == "redline" ? [4,2,2,4,2,4] : [4]
+    var result = [0.0]; var position = 0.0; var index = 0
+    while position < total {
+      position += pattern[index % pattern.count]*beat; index += 1
+      if position >= total-0.25 { break }
+      let radius = trend ? min(0.1,beat*0.2) : 0.18
+      let low = max(1,Int((position-radius)*50)), high = min(count-1,Int((position+radius)*50))
+      var snapped = position
+      if low <= high, let peak = (low...high).max(by: { onset[$0] < onset[$1] }), onset[peak] > 0.0001 { snapped = Double(peak)/50 }
+      if snapped-result.last! > (trend ? 0.2 : 0.65) && total-snapped > 0.25 { result.append(snapped) }
     }
     result.append(total); return result
+  }
+  // Sample a few thumbnails: this selects visual change, not semantic "best moments".
+  private func actionStart(_ asset: AVAsset, needed: Double) throws -> Double {
+    let available = max(0,asset.duration.seconds-needed)
+    guard available > 0.15 else { return 0 }
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width:64,height:64)
+    generator.requestedTimeToleranceBefore = tm(0.08); generator.requestedTimeToleranceAfter = tm(0.08)
+    func pixels(_ time: Double) -> [UInt8]? {
+      guard let image = try? generator.copyCGImage(at:tm(time),actualTime:nil) else { return nil }
+      var bytes = [UInt8](repeating:0,count:32*32)
+      let ok = bytes.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(data:buffer.baseAddress,width:32,height:32,bitsPerComponent:8,bytesPerRow:32,space:CGColorSpaceCreateDeviceGray(),bitmapInfo:CGImageAlphaInfo.none.rawValue) else { return false }
+        context.draw(image,in:CGRect(x:0,y:0,width:32,height:32));return true
+      }
+      return ok ? bytes : nil
+    }
+    var best = -1.0; var selected = 0.0
+    for i in 0..<8 {
+      try check(); let time = available*Double(i)/7
+      guard let a = pixels(time), let b = pixels(min(asset.duration.seconds-0.05,time+0.16)) else { continue }
+      let motion = zip(a,b).reduce(0.0) { $0+abs(Double($1.0)-Double($1.1)) }/1024
+      let mean = a.reduce(0.0) { $0+Double($1) }/1024
+      let score = motion*(mean > 15 && mean < 240 ? 1 : 0.1)
+      if score > best { best = score; selected = time }
+    }
+    return selected
   }
   private func silenceSpans(_ asset: AVAsset, limit: Double) throws -> [ReelSpan] {
     let values = try energies(asset, limit: limit)
@@ -131,7 +179,13 @@ public final class ReelEngine {
     let template = options["template"] as? String ?? "clean"
     let duration = min(60, max(5, (options["duration"] as? NSNumber)?.doubleValue ?? 15))
     let bpm = min(200, max(60, (options["bpm"] as? NSNumber)?.doubleValue ?? 120))
-    let size = options["quality"] as? String == "1080" ? CGSize(width: 1080, height: 1920) : CGSize(width: 720, height: 1280)
+    let short: CGFloat = options["quality"] as? String == "1080" ? 1080 : 720
+    let landscape = options["aspect"] as? String == "16:9"
+    let square = options["aspect"] as? String == "1:1"
+    let size = square ? CGSize(width:short,height:short) : landscape ? CGSize(width:short*16/9,height:short) : CGSize(width:short,height:short*16/9)
+    let trend = ["hero","redline"].contains(template)
+    let intensity = min(1,max(0.25,(options["intensity"] as? NSNumber)?.doubleValue ?? 0.65))
+    let overlap = speech ? 0.0 : template == "hero" ? 0.08 : template == "redline" ? 0.12 : 0.18
     let composition = AVMutableComposition()
     var plan: [(AVAsset, Double, Double)] = []
     var captions: [ReelCaption] = []; var music: AVAsset?
@@ -175,27 +229,42 @@ public final class ReelEngine {
       music = AVURLAsset(url: try localURL(options["music"] as? String ?? ""))
       let total = min(duration, music!.duration.seconds)
       guard total.isFinite && total > 0.7 else { throw fail("Музыка слишком короткая") }
-      let boundaries = try cuts(music!, total: total, bpm: bpm)
+      let boundaries = try cuts(music!, total: total, bpm: bpm, automatic: options["autoBeat"] as? Bool ?? true, template: template)
+      var sampled: [Int:Double] = [:]
       for i in 0..<boundaries.count-1 {
-        plan.append((assets[i % assets.count], 0, boundaries[i+1]-boundaries[i]+(i < boundaries.count-2 ? 0.18 : 0)))
+        let asset = assets[i % assets.count]
+        let length = boundaries[i+1]-boundaries[i]+(i < boundaries.count-2 ? overlap : 0)
+        let key = i % assets.count
+        var offset = 0.0
+        if trend && (options["selectMoments"] as? Bool ?? true) {
+          if sampled[key] == nil { sampled[key] = try actionStart(asset,needed:length*1.3) }
+          let room = max(0,asset.duration.seconds-length*1.3)
+          offset = min(room,sampled[key] ?? 0)
+          if i >= assets.count && room > 0.2 { offset = (offset+Double(i/assets.count)*0.7).truncatingRemainder(dividingBy:room) }
+        }
+        progress(0.03+Double(i)/Double(boundaries.count)*0.04,"Подбор фрагментов на iPhone")
+        plan.append((asset, offset, length))
       }
     }
     try check()
     var visuals: [ReelVisual] = []; var cursor = 0.0
-    let overlap = speech ? 0.0 : 0.18
     for (index, item) in plan.enumerated() {
       try check()
       let (asset, sourceStart, outputDuration) = item
       guard let source = asset.tracks(withMediaType: .video).first, asset.duration.seconds.isFinite, asset.duration.seconds > 0.1,
             let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw fail("Не удалось прочитать видео") }
       let start = cursor
-      if !speech && ["velocity", "zoom"].contains(template) {
-        var outputTime = 0.0; var sourceTime = 0.0
+      if !speech && ["velocity", "zoom", "hero", "redline"].contains(template) {
+        var outputTime = 0.0; var sourceTime = sourceStart
         // 30 speed samples per second. Splits are exact on the composition timebase.
         while outputTime < outputDuration-0.00001 {
           try check()
           let step = min(1.0/30, outputDuration-outputTime)
-          let rate = 1.25-0.75*cos(2*Double.pi*outputTime/outputDuration)
+          let phase = outputTime/outputDuration
+          let rate: Double
+          if template == "hero" { rate = 0.45+2.1*pow(abs(2*phase-1),3) }
+          else if template == "redline" { rate = 0.65+0.85*pow(abs(2*phase-1),4) }
+          else { rate = 1.25-0.75*cos(2*Double.pi*phase) }
           var remainOutput = step
           while remainOutput > 0.00001 {
             if sourceTime >= asset.duration.seconds-0.0001 { sourceTime = 0 }
@@ -240,14 +309,14 @@ public final class ReelEngine {
     vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
     vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
     vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-    let textures = await MainActor.run { captions.map { ReelTextTexture(caption: $0, size: size) } }
+    let textures = await MainActor.run { captions.map { ReelTextTexture(caption: $0, size: size, editorial: template == "redline") } }
     let points = Array(Set([0.0, total]+visuals.flatMap { [$0.start, $0.end] })).sorted()
     vc.customVideoCompositorClass = ReelVideoCompositor.self
     vc.instructions = (0..<points.count-1).compactMap { index in
       let a = points[index], b = points[index+1]
       guard b-a > 0.00001 else { return nil }
       let active = visuals.filter { $0.start <= (a+b)/2 && $0.end > (a+b)/2 }
-      return ReelCIInstruction(range: CMTimeRange(start: tm(a), end: tm(b)), visuals: active, template: template, size: size, captions: textures, flashes: template == "flash" ? visuals.dropFirst().map { $0.start } : [])
+      return ReelCIInstruction(range: CMTimeRange(start: tm(a), end: tm(b)), visuals: active, template: template, size: size, captions: textures, flashes: ["flash","hero"].contains(template) ? visuals.dropFirst().map { $0.start } : [], intensity: intensity, depthText: template == "redline" && (options["depthText"] as? Bool ?? false))
     }
     let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("ReelForge", isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
